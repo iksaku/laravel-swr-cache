@@ -13,7 +13,6 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
     {
         Repository::macro('swr', function (string $key, mixed $tts, mixed $ttl, Closure $callback) {
             /** @var Repository $this */
-
             if ($this->getSeconds($tts) >= $this->getSeconds($ttl)) {
                 throw new UnexpectedValueException('The time-to-stale value must be less than the time-to-live value.');
             }

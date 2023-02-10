@@ -35,7 +35,7 @@ it('sets the value in cache if it does not exist', function () {
 
     Event::assertDispatched(
         KeyWritten::class,
-        fn(KeyWritten $event) => $event->key === $key
+        fn (KeyWritten $event) => $event->key === $key
             && $event->value === $value
             && $event->seconds === $ttl
     );
@@ -66,7 +66,7 @@ it('overwrites tts key if value is not in cache', function () {
 
     Event::assertDispatched(
         KeyWritten::class,
-        fn(KeyWritten $event) => $event->key === $key
+        fn (KeyWritten $event) => $event->key === $key
             && $event->value === $value
             && $event->seconds === $ttl
     );
@@ -121,7 +121,7 @@ it('returns stale value from cache and queues update', function () {
     );
     Event::assertDispatched(
         KeyWritten::class,
-        fn(KeyWritten $event) => $event->key === $key
+        fn (KeyWritten $event) => $event->key === $key
             && $event->value === $newValue
             && $event->seconds === $ttl
     );
