@@ -1,0 +1,6 @@
+parameters:
+	ignoreErrors:
+		-
+			message: "#^Call to protected method getSeconds\\(\\) of class Illuminate\\\\Cache\\\\Repository\\.$#"
+			count: 2
+			path: src/LaravelSwrCacheServiceProvider.php
