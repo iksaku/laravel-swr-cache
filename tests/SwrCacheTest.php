@@ -10,13 +10,13 @@ test('swr macro is registered', function () {
     expect(cache()->hasMacro('swr'))->toBeTrue();
 });
 
-it('throws an exception if time-to-stale is greater or equal than time-to-live', function (mixed $tts, mixed $ttl) {
-    cache()->swr('key', $tts, $ttl, fn () => 'value');
+it('throws an exception if time-to-stale is greater or equal than time-to-live', function (mixed $ttl, mixed $tts) {
+    cache()->swr('key', $ttl, $tts, fn () => 'value');
 })
     ->throws(UnexpectedValueException::class, 'The time-to-stale value must be less than the time-to-live value.')
     ->with([
-        ['tts' => 10, 'ttl' => 5],
-        ['tts' => 10, 'ttl' => 10],
+        ['ttl' => 5, 'tts' => 10],
+        ['ttl' => 10, 'tts' => 10],
     ]);
 
 it('sets the value in cache if it does not exist', function () {
@@ -24,7 +24,7 @@ it('sets the value in cache if it does not exist', function () {
 
     $value = 'value';
 
-    cache()->swr($key = 'key', $tts = 10, $ttl = 20, fn () => $value);
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $value);
 
     Event::assertDispatched(
         KeyWritten::class,
@@ -47,7 +47,7 @@ it('sets the value in cache if it does not exist', function () {
 it('overwrites tts key if value is not in cache', function () {
     $value = 'value';
 
-    cache()->swr($key = 'key', $tts = 10, $ttl = 20, fn () => $value);
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $value);
     cache()->forget($key);
 
     expect(cache()->has("{$key}:tts"))->toBeTrue()
@@ -55,7 +55,7 @@ it('overwrites tts key if value is not in cache', function () {
 
     Event::fake();
 
-    cache()->swr($key, $tts, $ttl, fn () => $value);
+    cache()->swr($key, $ttl, $tts, fn () => $value);
 
     Event::assertDispatched(
         KeyWritten::class,
@@ -78,11 +78,11 @@ it('overwrites tts key if value is not in cache', function () {
 it('returns the value in cache if it is fresh', function () {
     $value = 'value';
 
-    cache()->swr($key = 'key', $tts = 10, $ttl = 20, fn () => $value);
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $value);
 
     Event::fake();
 
-    $valueFromCache = cache()->swr($key, $tts, $ttl, fn () => $value);
+    $valueFromCache = cache()->swr($key, $ttl, $tts, fn () => $value);
 
     Event::assertNotDispatched(CacheMissed::class);
 
@@ -96,7 +96,7 @@ it('returns the value in cache if it is fresh', function () {
 it('returns stale value from cache and queues update', function () {
     $originalValue = 'original value';
 
-    cache()->swr($key = 'key', $tts = 10, $ttl = 20, fn () => $originalValue);
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
 
     travelTo(now()->addSeconds($tts)->addSecond());
 
@@ -104,7 +104,7 @@ it('returns stale value from cache and queues update', function () {
 
     $newValue = 'new value';
 
-    $staleValue = cache()->swr($key, $tts, $ttl, fn () => $newValue);
+    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue);
 
     Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
     Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);

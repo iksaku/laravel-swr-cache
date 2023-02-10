@@ -5,15 +5,44 @@
 [![GitHub Code Style Action Status](https://img.shields.io/github/actions/workflow/status/iksaku/laravel-swr-cache/fix-php-code-style-issues.yml?branch=main&label=code%20style&style=flat-square)](https://github.com/iksaku/laravel-swr-cache/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
 [![Total Downloads](https://img.shields.io/packagist/dt/iksaku/laravel-swr-cache.svg?style=flat-square)](https://packagist.org/packages/iksaku/laravel-swr-cache)
 
-This is where your description should go. Limit it to a paragraph or two. Consider adding a small example.
+There are applications out there that rely heavily on cache to improve performance,
+and thanks to Laravel's `cache()->remember()` method, we can easily cache the result
+of a callback for a given time to live (TTL).
 
-## Support us
+However, there are cases where the callback may take a long time to execute, and
+we don't want to wait for it to finish before returning the result to the user.
 
-[<img src="https://github-ads.s3.eu-central-1.amazonaws.com/laravel-swr-cache.jpg?t=1" width="419px" />](https://spatie.be/github-ad-click/laravel-swr-cache)
+This is where the [Stale-While-Revalidate](https://web.dev/stale-while-revalidate/)
+pattern comes in handy. It allows us to return a cached result immediately, and
+then execute the callback in the background to update the cache for the next
+request.
 
-We invest a lot of resources into creating [best in class open source packages](https://spatie.be/open-source). You can support us by [buying one of our paid products](https://spatie.be/open-source/support-us).
+<details>
+<summary>How SWR works under the hood?</summary>
 
-We highly appreciate you sending us a postcard from your hometown, mentioning which of our package(s) you are using. You'll find our address on [our contact page](https://spatie.be/about-us). We publish all received postcards on [our virtual postcard wall](https://spatie.be/open-source/postcards).
+```mermaid
+flowchart TD
+    Request[Request cache key] --> CacheHit{Is key available in cache?}
+
+    CacheHit -->|No| FirstTimeProcess[Execute long process]
+    FirstTimeProcess --> FirstTimeCache[Cache result]
+    FirstTimeCache --> Response
+    
+    CacheHit -->|Yes| CacheStale{Is cache stale?}
+        CacheStale -->|No| ObtainCache[Obtain value from cache]
+        ObtainCache --> Response
+
+        CacheStale --> |Yes| QueueUpdate[Queue cache update]
+            QueueUpdate --> ObtainStaleCache[Obtain stale value from cache]
+            ObtainStaleCache --> Response
+
+            QueueUpdate --> AfterResponse[/Wait until application response/]
+            AfterResponse --> LongProcess[Execute long process]
+            LongProcess --> CacheResult[Cache result]
+
+    Response[Return value] --> Continue[/.../]
+```
+</details>
 
 ## Installation
 
@@ -23,37 +52,38 @@ You can install the package via composer:
 composer require iksaku/laravel-swr-cache
 ```
 
-You can publish and run the migrations with:
-
-```bash
-php artisan vendor:publish --tag="laravel-swr-cache-migrations"
-php artisan migrate
-```
-
-You can publish the config file with:
-
-```bash
-php artisan vendor:publish --tag="laravel-swr-cache-config"
-```
-
-This is the contents of the published config file:
-
-```php
-return [
-];
-```
-
-Optionally, you can publish the views using
-
-```bash
-php artisan vendor:publish --tag="laravel-swr-cache-views"
-```
-
 ## Usage
 
+The `swr()` method is a wrapper around `cache()->remember()` that adds support for
+the Stale-While-Revalidate pattern.
+You can access it using the `cache()` helper:
+
 ```php
-$laravelSwrCache = new Iksaku\LaravelSwrCache();
-echo $laravelSwrCache->echoPhrase('Hello, Iksaku!');
+$stats = cache()->swr(
+    key: 'stats',
+    ttl: now()->addHour(),
+    tts: now()->addMinutes(15),
+    callback: function () {
+        // This may take a couple of seconds...
+    }
+);
+
+// ...
+```
+
+Or using the `Cache` facade:
+
+```php
+$stats = \Illuminate\Support\Facades\Cache::swr(
+    key: 'stats',
+    ttl: now()->addHour(),
+    tts: now()->addMinutes(15),
+    callback: function () {
+        // This may take a couple of seconds...
+    }
+);
+
+// ...
 ```
 
 ## Testing
