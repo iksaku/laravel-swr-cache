@@ -2,6 +2,7 @@
 
 use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Cache\Events\CacheMissed;
+use Illuminate\Cache\Events\KeyForgotten;
 use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Support\Facades\Event;
 use function Pest\Laravel\travelTo;
@@ -86,7 +87,6 @@ it('returns the value in cache if it is fresh', function () {
 
     Event::assertNotDispatched(CacheMissed::class);
 
-    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === "{$key}:tts");
     Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
 
     expect(cache()->get("{$key}:tts"))->toBeTrue();
@@ -106,12 +106,15 @@ it('returns stale value from cache and queues update', function () {
 
     $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue);
 
-    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
     Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
 
     expect($staleValue)->toBe($originalValue);
 
     app()->terminate();
+
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:revalidating");
+    Event::assertDispatched(KeyWritten::class, fn (KeyWritten $event) => $event->key === "{$key}:revalidating");
 
     Event::assertDispatched(
         KeyWritten::class,
@@ -124,6 +127,10 @@ it('returns stale value from cache and queues update', function () {
         fn (KeyWritten $event) => $event->key === $key
             && $event->value === $newValue
             && $event->seconds === $ttl
+    );
+    Event::assertDispatched(
+        KeyForgotten::class,
+        fn (KeyForgotten $event) => $event->key === "{$key}:revalidating"
     );
 
     expect(cache()->get("{$key}:tts"))->toBeTrue();

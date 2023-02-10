@@ -34,17 +34,20 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
                 return $remember();
             }
 
-            // If value in cache is stale, queue an update after application lifecycle ends.
-            // TODO: Need a good way to test queue deduplication.
-            if ($this->missing($ttsKey) && $this->missing($revalidatingKey)) {
+            app()->terminating(function () use ($ttsKey, $revalidatingKey, $remember) {
+                /** @var Repository $this */
+                if ($this->has($ttsKey) || $this->has($revalidatingKey)) {
+                    return;
+                }
+
                 $this->put($revalidatingKey, true);
 
-                app()->terminating(function () use ($revalidatingKey, $remember) {
-                    /** @var Repository $this */
+                try {
                     $remember();
+                } finally {
                     $this->forget($revalidatingKey);
-                });
-            }
+                }
+            });
 
             return $this->get($key);
         });
