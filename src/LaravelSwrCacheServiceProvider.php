@@ -9,9 +9,9 @@ use UnexpectedValueException;
 
 class LaravelSwrCacheServiceProvider extends ServiceProvider
 {
-    public function boot()
+    public function boot(): void
     {
-        Repository::macro('swr', function (string $key, mixed $ttl, mixed $tts, Closure $callback) {
+        Repository::macro('swr', function (string $key, mixed $ttl, mixed $tts, Closure $callback, bool|Closure $queue = false) {
             /** @var Repository $this */
             if ($this->getSeconds($tts) >= $this->getSeconds($ttl)) {
                 throw new UnexpectedValueException('The time-to-stale value must be less than the time-to-live value.');
@@ -23,18 +23,29 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
             // Re-implement the logic of the `remember()` method to avoid the overhead of
             // calling `has()` twice on the same key, as well as the need to `forget()`
             // the key before the value is ready to be set in cache.
-            $remember = fn () => tap($callback(), function (mixed $value) use ($key, $ttl, $ttsKey, $tts) {
+            $evaluateAndStore = function () use ($callback, $key, $ttl, $ttsKey, $tts, $revalidatingKey) {
                 /** @var Repository $this */
-                $this->put($key, $value, value($ttl, $value));
-                $this->put($ttsKey, true, value($tts, true));
-            });
+                try {
+                    $value = $callback();
+
+                    $this->put($key, $value, value($ttl, $value));
+                    $this->put($ttsKey, true, value($tts, true));
+
+                    return $value;
+                } finally {
+                    $this->forget($revalidatingKey);
+                }
+            };
 
             // Set the value in cache if key doesn't exist.
             if ($this->missing($key)) {
-                return $remember();
+                return $evaluateAndStore();
             }
 
-            app()->terminating(function () use ($ttsKey, $revalidatingKey, $remember) {
+            // After the application has finished handling the request, verify that the
+            // value in cache is still fresh. If not, re-evaluate the callback and
+            // store the new value in cache for the next request.
+            app()->terminating(function () use ($queue, $ttsKey, $revalidatingKey, $evaluateAndStore) {
                 /** @var Repository $this */
                 if ($this->has($ttsKey) || $this->has($revalidatingKey)) {
                     return;
@@ -42,13 +53,18 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
 
                 $this->put($revalidatingKey, true);
 
-                try {
-                    $remember();
-                } finally {
-                    $this->forget($revalidatingKey);
+                if (!$queue) {
+                    $evaluateAndStore();
+                } else {
+                    $queued = dispatch($evaluateAndStore);
+
+                    if ($queue instanceof Closure) {
+                        $queue($queued);
+                    }
                 }
             });
 
+            // Return the (possibly stale) value from cache.
             return $this->get($key);
         });
     }

@@ -86,6 +86,51 @@ $stats = \Illuminate\Support\Facades\Cache::swr(
 // ...
 ```
 
+If the value is available in cache, it will be returned immediately,
+otherwise, the callback will be executed and the result will be cached.
+
+If the value is stale, the value from cache will be returned immediately,
+and the callback will be executed after the response is sent to the user.
+You can learn more about this strategy on the
+[Running a task after the response is sent](https://divinglaravel.com/running-a-task-after-the-response-is-sent)
+post from [Mohamed Said](https://twitter.com/themsaid).
+
+### Queueing the callback execution
+
+If you prefer to queue the callback execution instead of running it after the
+response is sent, you can use the `queue` parameter:
+
+```php
+$stats = cache()->swr(
+    key: 'stats',
+    ttl: now()->addHour(),
+    tts: now()->addMinutes(15),
+    callback: function () {
+        // This may take more than a couple of seconds...
+    },
+    queue: true
+);
+```
+
+And, if you want to further customize the queued job, you can pass on a closure
+that accepts a parameter of type [`Illuminate/Foundation/Bus/PendingClosureDispatch`](https://laravel.com/api/9.x/Illuminate/Foundation/Bus/PendingClosureDispatch.html):
+
+```php
+use Illuminate/Foundation/Bus/PendingClosureDispatch;
+
+$stats = cache()->swr(
+    key: 'stats',
+    ttl: now()->addHour(),
+    tts: now()->addMinutes(15),
+    callback: function () {
+        // This may take more than a couple of seconds...
+    },
+    queue: function (PendingClosureDispatch $job) {
+        $job->onQueue('high-priority')
+    }
+);
+```
+
 ## Testing
 
 ```bash

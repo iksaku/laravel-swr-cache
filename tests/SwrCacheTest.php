@@ -4,7 +4,10 @@ use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Cache\Events\CacheMissed;
 use Illuminate\Cache\Events\KeyForgotten;
 use Illuminate\Cache\Events\KeyWritten;
+use Illuminate\Foundation\Bus\PendingClosureDispatch;
+use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use function Pest\Laravel\travelTo;
 
 test('swr macro is registered', function () {
@@ -93,7 +96,7 @@ it('returns the value in cache if it is fresh', function () {
     expect($valueFromCache)->toBe($value);
 });
 
-it('returns stale value from cache and queues update', function () {
+it('returns stale value from cache and updates after request', function () {
     $originalValue = 'original value';
 
     cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
@@ -115,6 +118,108 @@ it('returns stale value from cache and queues update', function () {
     Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
     Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:revalidating");
     Event::assertDispatched(KeyWritten::class, fn (KeyWritten $event) => $event->key === "{$key}:revalidating");
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === "{$key}:tts"
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $key
+            && $event->value === $newValue
+            && $event->seconds === $ttl
+    );
+    Event::assertDispatched(
+        KeyForgotten::class,
+        fn (KeyForgotten $event) => $event->key === "{$key}:revalidating"
+    );
+
+    expect(cache()->get("{$key}:tts"))->toBeTrue();
+    expect(cache()->get($key))->toBe($newValue);
+});
+
+it('returns stale value from cache and queues update', function () {
+    $originalValue = 'original value';
+
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
+
+    travelTo(now()->addSeconds($tts)->addSecond());
+
+    Event::fake();
+    Queue::fake();
+
+    $newValue = 'new value';
+
+    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: true);
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+
+    expect($staleValue)->toBe($originalValue);
+
+    app()->terminate();
+
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:revalidating");
+    Event::assertDispatched(KeyWritten::class, fn (KeyWritten $event) => $event->key === "{$key}:revalidating");
+
+    Queue::assertPushed(CallQueuedClosure::class, function ($job) {
+        app()->call([$job, 'handle']);
+        return true;
+    });
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === "{$key}:tts"
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $key
+            && $event->value === $newValue
+            && $event->seconds === $ttl
+    );
+    Event::assertDispatched(
+        KeyForgotten::class,
+        fn (KeyForgotten $event) => $event->key === "{$key}:revalidating"
+    );
+
+    expect(cache()->get("{$key}:tts"))->toBeTrue();
+    expect(cache()->get($key))->toBe($newValue);
+});
+
+it('returns stale value from cache and (custom) queues update', function () {
+    $originalValue = 'original value';
+
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
+
+    travelTo(now()->addSeconds($tts)->addSecond());
+
+    Event::fake();
+    Queue::fake();
+
+    $newValue = 'new value';
+
+    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: function (PendingClosureDispatch $job) {
+        $job->onQueue('custom-queue');
+    });
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+
+    expect($staleValue)->toBe($originalValue);
+
+    app()->terminate();
+
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:revalidating");
+    Event::assertDispatched(KeyWritten::class, fn (KeyWritten $event) => $event->key === "{$key}:revalidating");
+
+    Queue::assertPushedOn('custom-queue', CallQueuedClosure::class, function ($job) {
+        app()->call([$job, 'handle']);
+        return true;
+    });
 
     Event::assertDispatched(
         KeyWritten::class,
