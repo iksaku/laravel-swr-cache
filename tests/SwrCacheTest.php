@@ -8,6 +8,7 @@ use Illuminate\Foundation\Bus\PendingClosureDispatch;
 use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
+
 use function Pest\Laravel\travelTo;
 
 test('swr macro is registered', function () {
@@ -166,6 +167,7 @@ it('returns stale value from cache and queues update', function () {
 
     Queue::assertPushed(CallQueuedClosure::class, function ($job) {
         app()->call([$job, 'handle']);
+
         return true;
     });
 
@@ -218,6 +220,7 @@ it('returns stale value from cache and (custom) queues update', function () {
 
     Queue::assertPushedOn('custom-queue', CallQueuedClosure::class, function ($job) {
         app()->call([$job, 'handle']);
+
         return true;
     });
 

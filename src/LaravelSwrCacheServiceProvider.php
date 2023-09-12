@@ -53,7 +53,7 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
 
                 $this->put($revalidatingKey, true);
 
-                if (!$queue) {
+                if (! $queue) {
                     $evaluateAndStore();
                 } else {
                     $queued = dispatch($evaluateAndStore);
