@@ -1,4 +1,4 @@
-# This is my package laravel-swr-cache
+# Laravel Cache Stale-While-Revalidate
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/iksaku/laravel-swr-cache.svg?style=flat-square)](https://packagist.org/packages/iksaku/laravel-swr-cache)
 [![GitHub Tests Action Status](https://img.shields.io/github/actions/workflow/status/iksaku/laravel-swr-cache/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/iksaku/laravel-swr-cache/actions?query=workflow%3Arun-tests+branch%3Amain)
