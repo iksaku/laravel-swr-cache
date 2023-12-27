@@ -13,10 +13,13 @@ jobs:
       fail-fast: true
       matrix:
         os: [ubuntu-latest, windows-latest]
-        php: [8.2, 8.1]
-        laravel: [9.*]
+        php: [8.3, 8.2, 8.1]
+        laravel: [10.*, 9.*]
         stability: [prefer-lowest, prefer-stable]
         include:
+          - laravel: 10.*
+            testbench: 8.*
+            carbon: ^2.63
           - laravel: 9.*
             testbench: 7.*
             carbon: ^2.63
@@ -31,7 +34,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv, imagick, fileinfo
+          extensions: mbstring, zip, bcmath, fileinfo
           coverage: none
 
       - name: Setup problem matchers
