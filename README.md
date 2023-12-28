@@ -29,11 +29,11 @@ flowchart TD
     FirstTimeCache --> Response
 
     CacheHit -->|Yes| CacheStale{Is it stale?}
-    CacheStale -->|No| ObtainCache["`Get _fresh_ value from cache`"]
+    CacheStale -->|No| ObtainCache[Get fresh value from cache]
     ObtainCache --> Response
 
     CacheStale --> |Yes| ObtainStaleCache
-        ObtainStaleCache["`Get _stale_ value from cache`"] --> Response
+        ObtainStaleCache[Get stale value from cache] --> Response
         
         ObtainStaleCache -.- Background
         subgraph Background[After response]
