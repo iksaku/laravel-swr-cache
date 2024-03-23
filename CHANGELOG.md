@@ -6,7 +6,7 @@ All notable changes to `laravel-swr-cache` will be documented in this file.
 
 ### What's Changed
 
-* Laravel 11 compatibility by @iksaku in #3
+* Laravel 11 compatibility by @iksaku in https://github.com/iksaku/laravel-swr-cache/pull/3
 
 **Full Changelog**: https://github.com/iksaku/laravel-swr-cache/compare/1.0.1...1.0.2
 
