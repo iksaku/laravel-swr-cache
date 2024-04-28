@@ -46,6 +46,9 @@ flowchart TD
 
 ## Installation
 
+> [!IMPORTANT]
+> This package makes use of [Atomic Locks](https://laravel.com/docs/11.x/cache#atomic-locks). Please make sure that your cache driver supports this feature.
+
 You can install the package via composer:
 
 ```bash
