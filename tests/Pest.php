@@ -2,6 +2,7 @@
 
 use Iksaku\LaravelSwrCache\SwrKeyGenerator;
 use Iksaku\LaravelSwrCache\Tests\TestCase;
+
 use function PHPUnit\Framework\assertFalse;
 use function PHPUnit\Framework\assertTrue;
 
@@ -20,7 +21,9 @@ function assertTerminatingCallbacksToBe(int $count): void
     $callbacks = array_filter(
         invade(app())->terminatingCallbacks,
         function (mixed $callback) {
-            if (! ($callback instanceof \Closure)) return false;
+            if (! ($callback instanceof \Closure)) {
+                return false;
+            }
 
             $reflection = new ReflectionFunction($callback);
 

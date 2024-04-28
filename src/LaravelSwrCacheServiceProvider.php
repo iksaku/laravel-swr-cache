@@ -23,21 +23,12 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
              * After the time-to-stale has passed, the value in cache is considered
              * "stale" but will still be served while a fresh value is obtained
              * in the background.
-             *
-             * @param string $key
-             * @param mixed $ttl
-             * @param mixed $tts
-             * @param Closure $callback
-             * @param bool|Closure $queue
-             * @return mixed
              */
-            function (string $key, mixed $ttl, mixed $tts, Closure $callback, bool|Closure $queue = false): mixed
-            {
+            function (string $key, mixed $ttl, mixed $tts, Closure $callback, bool|Closure $queue = false): mixed {
                 /** @var Repository $this */
-
                 $store = $this->getStore();
 
-                if (!($store instanceof LockProvider) || $store instanceof NullStore) {
+                if (! ($store instanceof LockProvider) || $store instanceof NullStore) {
                     throw new RuntimeException('This cache driver does not support Atomic Locks.');
                 }
 
@@ -105,6 +96,7 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
                         app()->terminating(function () use ($evaluateAndStore, $queue) {
                             if (! $queue) {
                                 $evaluateAndStore();
+
                                 return;
                             }
 

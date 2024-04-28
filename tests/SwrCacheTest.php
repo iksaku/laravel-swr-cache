@@ -205,6 +205,7 @@ it('returns stale value from cache and queues update', function () {
 
     Queue::assertPushed(CallQueuedClosure::class, function ($j) use (&$job) {
         $job = $j;
+
         return true;
     });
 
@@ -247,7 +248,7 @@ it('returns stale value from cache and (custom) queues update', function () {
     $newValue = 'new value';
     $customQueue = 'custom-queue';
 
-    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: fn(PendingClosureDispatch $job) => $job->onQueue($customQueue));
+    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: fn (PendingClosureDispatch $job) => $job->onQueue($customQueue));
 
     expect($staleValue)->toBe($originalValue);
 
@@ -274,6 +275,7 @@ it('returns stale value from cache and (custom) queues update', function () {
 
     Queue::assertPushedOn($customQueue, CallQueuedClosure::class, function ($j) use (&$job) {
         $job = $j;
+
         return true;
     });
 
@@ -422,8 +424,9 @@ it('prevents queued checks from overlapping between multiple calls', function ()
     $job = null;
 
     Queue::assertPushed(CallQueuedClosure::class, 1);
-    Queue::assertPushed( CallQueuedClosure::class, function ($j) use (&$job) {
+    Queue::assertPushed(CallQueuedClosure::class, function ($j) use (&$job) {
         $job = $j;
+
         return true;
     });
 
@@ -515,6 +518,7 @@ it('prevents queued checks in custom queue from overlapping between multiple cal
     Queue::assertPushed(CallQueuedClosure::class, 1);
     Queue::assertPushedOn($customQueue, CallQueuedClosure::class, function ($j) use (&$job) {
         $job = $j;
+
         return true;
     });
 
