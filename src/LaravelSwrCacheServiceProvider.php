@@ -41,16 +41,25 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
 
                 /** @var Lock $lock */
                 $lock = $store->lock($lockName = SwrKeyGenerator::atomicLock($key));
-                $lockOwner = $lock->owner();
 
                 if ($lock instanceof NoLock) {
                     throw new RuntimeException('Unexpected [NoLock] instance received from cache driver.');
                 }
 
-                $evaluateAndStore = static function () use ($callback, $key, $ttl, $ttsKey, $tts, $lockName, $lockOwner) {
+                // Ensure that only one process owns the lock.
+                // This will help in any of these situations:
+                //   1. Value is missing, so we force callback evaluation but only
+                //      send once to the cache store, minimizing load on the
+                //      cache store in highly concurrent environments.
+                //   2. Ensure freshness check is only executed once, independently
+                //      of how many times this function was called in the current
+                //      application lifecycle, and even prevents execution
+                //      overlap between multiple requests and multiple servers.
+                $weOwnTheLock = $lock->get();
+
+                $evaluateAndStore = static function () use ($callback, $key, $ttl, $ttsKey, $tts, $lockName, $weOwnTheLock) {
                     /** @var Lock $lock */
-                    $lock = cache()->restoreLock($lockName, $lockOwner);
-                    $weOwnTheLock = $lock->isOwnedByCurrentProcess();
+                    $lock = cache()->lock($lockName);
 
                     try {
                         $value = $callback();
@@ -69,17 +78,6 @@ class LaravelSwrCacheServiceProvider extends ServiceProvider
                         }
                     }
                 };
-
-                // Ensure that only one process owns the lock.
-                // This will help in any of these situations:
-                //   1. Value is missing, so we force callback evaluation but only
-                //      send once to the cache store, minimizing load on the
-                //      cache store in highly concurrent environments.
-                //   2. Ensure freshness check is only executed once, independently
-                //      of how many times this function was called in the current
-                //      application lifecycle, and even prevents execution
-                //      overlap between multiple requests and multiple servers.
-                $weOwnTheLock = $lock->get();
 
                 // Force a value for the current function lifecycle.
                 if ($this->missing($key)) {
