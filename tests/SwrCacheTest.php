@@ -1,8 +1,8 @@
 <?php
 
+use Iksaku\LaravelSwrCache\SwrKeyGenerator;
 use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Cache\Events\CacheMissed;
-use Illuminate\Cache\Events\KeyForgotten;
 use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Foundation\Bus\PendingClosureDispatch;
 use Illuminate\Queue\CallQueuedClosure;
@@ -11,19 +11,6 @@ use Illuminate\Support\Facades\Queue;
 
 use function Pest\Laravel\travelTo;
 
-test('swr macro is registered', function () {
-    expect(cache()->hasMacro('swr'))->toBeTrue();
-});
-
-it('throws an exception if time-to-stale is greater or equal than time-to-live', function (mixed $ttl, mixed $tts) {
-    cache()->swr('key', $ttl, $tts, fn () => 'value');
-})
-    ->throws(UnexpectedValueException::class, 'The time-to-stale value must be less than the time-to-live value.')
-    ->with([
-        ['ttl' => 5, 'tts' => 10],
-        ['ttl' => 10, 'tts' => 10],
-    ]);
-
 it('sets the value in cache if it does not exist', function () {
     Event::fake();
 
@@ -31,53 +18,71 @@ it('sets the value in cache if it does not exist', function () {
 
     cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $value);
 
-    Event::assertDispatched(
-        KeyWritten::class,
-        fn (KeyWritten $event) => $event->key === "{$key}:tts"
-            && $event->value === true
-            && $event->seconds === $tts
-    );
+    assertFreeSwrAtomicLock($key);
 
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $key);
     Event::assertDispatched(
         KeyWritten::class,
         fn (KeyWritten $event) => $event->key === $key
             && $event->value === $value
             && $event->seconds === $ttl
     );
-
-    expect(cache()->get("{$key}:tts"))->toBeTrue();
     expect(cache()->get($key))->toBe($value);
+
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
+
+    // It should completely ignore Time-To-Stale checks and directly write it
+    Event::assertNotDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $ttsKey);
+    Event::assertNotDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $ttsKey);
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $ttsKey
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    expect(cache()->get($ttsKey))->toBeTrue();
 });
 
-it('overwrites tts key if value is not in cache', function () {
+it('ignores time-to-stale key if value is not in cache', function () {
     $value = 'value';
 
     cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $value);
+
+    assertFreeSwrAtomicLock($key);
+
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
+
     cache()->forget($key);
 
-    expect(cache()->has("{$key}:tts"))->toBeTrue()
-        ->and(cache()->has($key))->toBeFalse();
+    expect(cache())
+        ->has($ttsKey)->toBeTrue()
+        ->has($key)->toBeFalse();
 
     Event::fake();
 
     cache()->swr($key, $ttl, $tts, fn () => $value);
 
-    Event::assertDispatched(
-        KeyWritten::class,
-        fn (KeyWritten $event) => $event->key === "{$key}:tts"
-            && $event->value === true
-            && $event->seconds === $tts
-    );
+    assertFreeSwrAtomicLock($key);
 
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $key);
     Event::assertDispatched(
         KeyWritten::class,
         fn (KeyWritten $event) => $event->key === $key
             && $event->value === $value
             && $event->seconds === $ttl
     );
-
-    expect(cache()->get("{$key}:tts"))->toBeTrue();
     expect(cache()->get($key))->toBe($value);
+
+    // It should completely ignore Time-To-Stale checks and directly overwrite it
+    Event::assertNotDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $ttsKey);
+    Event::assertNotDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $ttsKey);
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $ttsKey
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    expect(cache()->get($ttsKey))->toBeTrue();
 });
 
 it('returns the value in cache if it is fresh', function () {
@@ -85,16 +90,26 @@ it('returns the value in cache if it is fresh', function () {
 
     cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $value);
 
+    assertFreeSwrAtomicLock($key);
+
+    travelTo(now()->addSeconds($tts - 1));
+
     Event::fake();
 
-    $valueFromCache = cache()->swr($key, $ttl, $tts, fn () => $value);
+    $valueFromCache = cache()->swr($key, $ttl, $tts, fn () => 'new value');
+
+    assertFreeSwrAtomicLock($key);
 
     Event::assertNotDispatched(CacheMissed::class);
+    Event::assertNotDispatched(KeyWritten::class);
+
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
 
     Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
-
-    expect(cache()->get("{$key}:tts"))->toBeTrue();
     expect($valueFromCache)->toBe($value);
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $ttsKey);
+    expect(cache()->get($ttsKey))->toBeTrue();
 });
 
 it('returns stale value from cache and updates after request', function () {
@@ -102,7 +117,9 @@ it('returns stale value from cache and updates after request', function () {
 
     cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
 
-    travelTo(now()->addSeconds($tts)->addSecond());
+    assertFreeSwrAtomicLock($key);
+
+    travelTo(now()->addSeconds($tts + 1));
 
     Event::fake();
 
@@ -110,41 +127,49 @@ it('returns stale value from cache and updates after request', function () {
 
     $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue);
 
+    assertGotSwrAtomicLock($key);
+
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
+
     Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $ttsKey);
+
+    Event::assertNotDispatched(KeyWritten::class);
 
     expect($staleValue)->toBe($originalValue);
 
-    app()->terminate();
+    Event::fake(); // Flush
 
-    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
-    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:revalidating");
-    Event::assertDispatched(KeyWritten::class, fn (KeyWritten $event) => $event->key === "{$key}:revalidating");
+    simulateRequestTermination();
 
-    Event::assertDispatched(
-        KeyWritten::class,
-        fn (KeyWritten $event) => $event->key === "{$key}:tts"
-            && $event->value === true
-            && $event->seconds === $tts
-    );
+    assertFreeSwrAtomicLock($key);
+
+    Event::assertNotDispatched(CacheHit::class);
+    Event::assertNotDispatched(CacheMissed::class);
+
     Event::assertDispatched(
         KeyWritten::class,
         fn (KeyWritten $event) => $event->key === $key
             && $event->value === $newValue
             && $event->seconds === $ttl
     );
-    Event::assertDispatched(
-        KeyForgotten::class,
-        fn (KeyForgotten $event) => $event->key === "{$key}:revalidating"
-    );
-
-    expect(cache()->get("{$key}:tts"))->toBeTrue();
     expect(cache()->get($key))->toBe($newValue);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $ttsKey
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    expect(cache()->get($ttsKey))->toBeTrue();
 });
 
 it('returns stale value from cache and queues update', function () {
     $originalValue = 'original value';
 
     cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
+
+    assertFreeSwrAtomicLock($key);
 
     travelTo(now()->addSeconds($tts)->addSecond());
 
@@ -155,41 +180,56 @@ it('returns stale value from cache and queues update', function () {
 
     $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: true);
 
-    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
-
     expect($staleValue)->toBe($originalValue);
 
-    app()->terminate();
+    assertGotSwrAtomicLock($key);
 
-    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
-    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:revalidating");
-    Event::assertDispatched(KeyWritten::class, fn (KeyWritten $event) => $event->key === "{$key}:revalidating");
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
 
-    Queue::assertPushed(CallQueuedClosure::class, function ($job) {
-        app()->call([$job, 'handle']);
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $ttsKey);
 
+    Event::assertNotDispatched(KeyWritten::class);
+
+    Queue::assertNothingPushed();
+
+    // Flush
+    Event::fake();
+    Queue::fake();
+
+    simulateRequestTermination();
+
+    Event::assertNothingDispatched();
+
+    $job = null;
+
+    Queue::assertPushed(CallQueuedClosure::class, function ($j) use (&$job) {
+        $job = $j;
         return true;
     });
 
-    Event::assertDispatched(
-        KeyWritten::class,
-        fn (KeyWritten $event) => $event->key === "{$key}:tts"
-            && $event->value === true
-            && $event->seconds === $tts
-    );
+    Event::fake(); // Flush
+
+    app()->call([$job, 'handle']);
+
+    Event::assertNotDispatched(CacheHit::class);
+    Event::assertNotDispatched(CacheMissed::class);
+
     Event::assertDispatched(
         KeyWritten::class,
         fn (KeyWritten $event) => $event->key === $key
             && $event->value === $newValue
             && $event->seconds === $ttl
     );
-    Event::assertDispatched(
-        KeyForgotten::class,
-        fn (KeyForgotten $event) => $event->key === "{$key}:revalidating"
-    );
-
-    expect(cache()->get("{$key}:tts"))->toBeTrue();
     expect(cache()->get($key))->toBe($newValue);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $ttsKey
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    expect(cache()->get($ttsKey))->toBeTrue();
 });
 
 it('returns stale value from cache and (custom) queues update', function () {
@@ -197,50 +237,311 @@ it('returns stale value from cache and (custom) queues update', function () {
 
     cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
 
+    assertFreeSwrAtomicLock($key);
+
     travelTo(now()->addSeconds($tts)->addSecond());
 
     Event::fake();
     Queue::fake();
 
     $newValue = 'new value';
+    $customQueue = 'custom-queue';
 
-    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: function (PendingClosureDispatch $job) {
-        $job->onQueue('custom-queue');
-    });
-
-    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: fn(PendingClosureDispatch $job) => $job->onQueue($customQueue));
 
     expect($staleValue)->toBe($originalValue);
 
-    app()->terminate();
+    assertGotSwrAtomicLock($key);
 
-    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:tts");
-    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === "{$key}:revalidating");
-    Event::assertDispatched(KeyWritten::class, fn (KeyWritten $event) => $event->key === "{$key}:revalidating");
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
 
-    Queue::assertPushedOn('custom-queue', CallQueuedClosure::class, function ($job) {
-        app()->call([$job, 'handle']);
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $ttsKey);
 
+    Event::assertNotDispatched(KeyWritten::class);
+
+    Queue::assertNothingPushed();
+
+    // Flush
+    Event::fake();
+    Queue::fake();
+
+    simulateRequestTermination();
+
+    Event::assertNothingDispatched();
+
+    $job = null;
+
+    Queue::assertPushedOn($customQueue, CallQueuedClosure::class, function ($j) use (&$job) {
+        $job = $j;
         return true;
     });
 
-    Event::assertDispatched(
-        KeyWritten::class,
-        fn (KeyWritten $event) => $event->key === "{$key}:tts"
-            && $event->value === true
-            && $event->seconds === $tts
-    );
+    Event::fake(); // Flush
+
+    app()->call([$job, 'handle']);
+
+    Event::assertNotDispatched(CacheHit::class);
+    Event::assertNotDispatched(CacheMissed::class);
+
     Event::assertDispatched(
         KeyWritten::class,
         fn (KeyWritten $event) => $event->key === $key
             && $event->value === $newValue
             && $event->seconds === $ttl
     );
-    Event::assertDispatched(
-        KeyForgotten::class,
-        fn (KeyForgotten $event) => $event->key === "{$key}:revalidating"
-    );
-
-    expect(cache()->get("{$key}:tts"))->toBeTrue();
     expect(cache()->get($key))->toBe($newValue);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $ttsKey
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    expect(cache()->get($ttsKey))->toBeTrue();
+});
+
+it('prevents request-end checks from overlapping between multiple calls', function () {
+    $originalValue = 'value';
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
+
+    assertFreeSwrAtomicLock($key);
+
+    assertTerminatingCallbacksToBe(0);
+
+    travelTo(now()->addSeconds($tts + 1));
+
+    Event::fake();
+    $newValue = 'new value';
+    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue);
+
+    expect($staleValue)->toBe($originalValue);
+
+    assertGotSwrAtomicLock($key);
+
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $ttsKey);
+    Event::assertNotDispatched(KeyWritten::class);
+
+    assertTerminatingCallbacksToBe(1);
+
+    Event::fake(); // Flush
+    $secondTimeStaleValue = cache()->swr($key, $ttl, $tts, fn () => 'this should be ignored');
+
+    expect($secondTimeStaleValue)->toBe($originalValue);
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertNotDispatched(CacheMissed::class); // Should ignore Time-To-Stale check
+    Event::assertNotDispatched(KeyWritten::class);
+
+    assertTerminatingCallbacksToBe(1);
+
+    Event::fake(); // Flush
+    simulateRequestTermination();
+
+    assertFreeSwrAtomicLock($key);
+
+    Event::assertNotDispatched(CacheHit::class);
+    Event::assertNotDispatched(CacheMissed::class);
+
+    Event::assertDispatched(KeyWritten::class, 2);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $key
+            && $event->value === $newValue
+            && $event->seconds === $ttl
+    );
+    expect(cache()->get($key))->toBe($newValue);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $ttsKey
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    expect(cache()->get($ttsKey))->toBeTrue();
+});
+
+it('prevents queued checks from overlapping between multiple calls', function () {
+    $originalValue = 'value';
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
+
+    assertFreeSwrAtomicLock($key);
+
+    assertTerminatingCallbacksToBe(0);
+
+    travelTo(now()->addSeconds($tts + 1));
+
+    Event::fake();
+    Queue::fake();
+
+    $newValue = 'new value';
+    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: true);
+
+    expect($staleValue)->toBe($originalValue);
+
+    assertGotSwrAtomicLock($key);
+
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $ttsKey);
+    Event::assertNotDispatched(KeyWritten::class);
+
+    Queue::assertNothingPushed();
+
+    assertTerminatingCallbacksToBe(1);
+
+    // Flush
+    Event::fake();
+    Queue::fake();
+
+    $secondTimeStaleValue = cache()->swr($key, $ttl, $tts, fn () => 'this should be ignored', queue: true);
+
+    expect($secondTimeStaleValue)->toBe($originalValue);
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertNotDispatched(CacheMissed::class); // Should ignore Time-To-Stale check
+    Event::assertNotDispatched(KeyWritten::class);
+
+    Queue::assertNothingPushed();
+
+    assertTerminatingCallbacksToBe(1);
+
+    // Flush
+    Event::fake();
+    Queue::fake();
+
+    simulateRequestTermination();
+
+    Event::assertNothingDispatched();
+
+    $job = null;
+
+    Queue::assertPushed(CallQueuedClosure::class, 1);
+    Queue::assertPushed( CallQueuedClosure::class, function ($j) use (&$job) {
+        $job = $j;
+        return true;
+    });
+
+    Event::fake(); // Flush
+
+    app()->call([$job, 'handle']);
+
+    assertFreeSwrAtomicLock($key);
+
+    Event::assertNotDispatched(CacheHit::class);
+    Event::assertNotDispatched(CacheMissed::class);
+
+    Event::assertDispatched(KeyWritten::class, 2);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $key
+            && $event->value === $newValue
+            && $event->seconds === $ttl
+    );
+    expect(cache()->get($key))->toBe($newValue);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $ttsKey
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    expect(cache()->get($ttsKey))->toBeTrue();
+});
+
+it('prevents queued checks in custom queue from overlapping between multiple calls', function () {
+    $originalValue = 'value';
+    cache()->swr($key = 'key', $ttl = 20, $tts = 10, fn () => $originalValue);
+
+    assertFreeSwrAtomicLock($key);
+
+    assertTerminatingCallbacksToBe(0);
+
+    travelTo(now()->addSeconds($tts + 1));
+
+    Event::fake();
+    Queue::fake();
+
+    $newValue = 'new value';
+    $customQueue = 'custom-queue';
+    $staleValue = cache()->swr($key, $ttl, $tts, fn () => $newValue, queue: $queueCallback = fn (PendingClosureDispatch $job) => $job->onQueue($customQueue));
+
+    expect($staleValue)->toBe($originalValue);
+
+    assertGotSwrAtomicLock($key);
+
+    $ttsKey = SwrKeyGenerator::timeToStale($key);
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertDispatched(CacheMissed::class, fn (CacheMissed $event) => $event->key === $ttsKey);
+    Event::assertNotDispatched(KeyWritten::class);
+
+    Queue::assertNothingPushed();
+
+    assertTerminatingCallbacksToBe(1);
+
+    // Flush
+    Event::fake();
+    Queue::fake();
+
+    $secondTimeStaleValue = cache()->swr($key, $ttl, $tts, fn () => 'this should be ignored', queue: $queueCallback);
+
+    expect($secondTimeStaleValue)->toBe($originalValue);
+
+    Event::assertDispatched(CacheHit::class, fn (CacheHit $event) => $event->key === $key);
+    Event::assertNotDispatched(CacheMissed::class); // Should ignore Time-To-Stale check
+    Event::assertNotDispatched(KeyWritten::class);
+
+    Queue::assertNothingPushed();
+
+    assertTerminatingCallbacksToBe(1);
+
+    // Flush
+    Event::fake();
+    Queue::fake();
+
+    simulateRequestTermination();
+
+    Event::assertNothingDispatched();
+
+    $job = null;
+
+    Queue::assertPushed(CallQueuedClosure::class, 1);
+    Queue::assertPushedOn($customQueue, CallQueuedClosure::class, function ($j) use (&$job) {
+        $job = $j;
+        return true;
+    });
+
+    Event::fake(); // Flush
+
+    app()->call([$job, 'handle']);
+
+    assertFreeSwrAtomicLock($key);
+
+    Event::assertNotDispatched(CacheHit::class);
+    Event::assertNotDispatched(CacheMissed::class);
+
+    Event::assertDispatched(KeyWritten::class, 2);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $key
+            && $event->value === $newValue
+            && $event->seconds === $ttl
+    );
+    expect(cache()->get($key))->toBe($newValue);
+
+    Event::assertDispatched(
+        KeyWritten::class,
+        fn (KeyWritten $event) => $event->key === $ttsKey
+            && $event->value === true
+            && $event->seconds === $tts
+    );
+    expect(cache()->get($ttsKey))->toBeTrue();
 });
